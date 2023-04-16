@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [ "release" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    - name: Log in to Docker HUB
+      uses: docker/login-action@f054a8b539a109f9f41c372932f1ae047eff08c9
+      with:
+        username: abys72
+        password: ${{ secrets.DOCKER_PASSWORD }}
+
+    - name: Build Docker Image
+      run: |
+        docker buildx install
+        docker buildx build --platform=linux/amd64 --file ./Dockerfile --tag abys72/ordis-docker .
+        docker push abys72/ordis-docker
+    - name: Public IP
+      id: ip
+      uses: haythem/public-ip@v1.2
+    - id: 'auth'
+      uses: 'google-github-actions/auth@v1'
+      with:
+        credentials_json: '${{ secrets.GOOGLE_KEY }}'
+
+    - name: 'Set up Cloud SDK'
+      uses: 'google-github-actions/setup-gcloud@v1'
+
+    - name: 'Add IP Rule Firewall'
+      run: 'gcloud compute firewall-rules create allow-github-action --allow tcp:22 --source-ranges ${{ steps.ip.outputs.ipv4 }}/32 --description "Github Action Rule"'
+      
+    - name: Sleep for 20 seconds
+      uses: jakejarvis/wait-action@master
+      with:
+          time: '20s'
+    - name: ssh deploy
+      uses: appleboy/ssh-action@master
+      with:
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        host: ${{ secrets.SSH_REMOTE_HOST }}
+        username: ${{ secrets.SSH_USER }}
+        port: 22
+        script: |
+            docker pull docker.io/abys72/ordis-docker
+            docker stop ordis-docker
+            docker rm ordis-docker
+            docker run -d --name ordis-docker -p 443:443 -p 80:80 abys72/ordis-docker
+            
+    - name: 'Remove Firewall Rule'
+      run: 'gcloud compute firewall-rules delete allow-github-action'
+      
